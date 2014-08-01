@@ -1,0 +1,59 @@
+/**
+ *  Copyright 2014 TangoMe Inc.
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ */
+
+
+agent.sources = KinesisSource
+agent.channels = diskchannel
+agent.sinks = KinesisSink
+
+## sink configuration
+###############################################
+agent.sinks.KinesisSink.type = com.tango.flume.kinesis.sink.KinesisSink 
+agent.sinks.KinesisSink.accessKey=
+agent.sinks.KinesisSink.accessSecretKey =
+agent.sinks.KinesisSink.kinesisPartitions =
+agent.sinks.KinesisSink.streamName =
+agent.sinks.KinesisSink.batchSize =
+agent.sinks.KinesisSink.kinesisEndpoint=https://kinesis.us-west-2.amazonaws.com
+
+## source configurationS
+################################################
+agent.sources.KinesisSource.type = com.tango.flume.kinesis.source.KinesisSource
+agent.sources.KinesisSource.accessKey =
+agent.sources.KinesisSource.accessSecretKey=
+agent.sources.KinesisSource.kinesisApplicationName=
+agent.sources.KinesisSource.kinesisStreamName=
+agent.sources.KinesisSource.initialPosition=TRIM_HORIZON
+agent.sources.KinesisSource.kinesisEndpoint=https://kinesis.us-west-2.amazonaws.com
+
+
+# The channel can be defined as follows.
+agent.sources.KinesisSource.channels = diskchannel
+
+
+#Specify the channel the sink should use
+agent.sinks.KinesisSink.channel = diskchannel
+
+
+#i# Use a channel which buffers events in memory
+agent.channels.diskchannel.type = file 
+agent.channels.diskchannel.checkpointDir = ./checkpoint
+agent.channels.diskchannel.dataDirs = ./data
+agent.channels.diskchannel.checkpointInterval = 10
+
+
+
+
