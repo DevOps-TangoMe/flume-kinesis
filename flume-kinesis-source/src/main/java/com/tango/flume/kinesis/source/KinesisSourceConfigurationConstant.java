@@ -23,12 +23,12 @@ import com.amazonaws.auth.BasicAWSCredentials;
 public class KinesisSourceConfigurationConstant implements AWSCredentialsProvider {
 
     //testing start
-    public static final String ACCESSKEY = "accessKey";
-    public static final String ACCESSSECRETKEY ="accessSecretKey";
-    public static final String APPLICATIONNAME = "kinesisApplicationName";
-    public static final String STREAMNAME = "kinesisStreamName";
-    public static final String KINESISENDPOINT = "kinesisEndpoint";
-    public static final String INITIALPOSITION = "initialPosition";
+    public static final String ACCESS_KEY = "accessKey";
+    public static final String ACCESS_SECRET_KEY ="accessSecretKey";
+    public static final String APPLICATION_NAME = "kinesisApplicationName";
+    public static final String STREAM_NAME = "kinesisStreamName";
+    public static final String KINESIS_ENDPOINT = "kinesisEndpoint";
+    public static final String INITIAL_POSITION = "initialPosition";
 
     //testing end
 

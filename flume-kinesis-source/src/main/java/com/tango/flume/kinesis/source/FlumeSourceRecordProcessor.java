@@ -140,22 +140,22 @@ public class FlumeSourceRecordProcessor implements IRecordProcessor{
                 chProcessor.processEventBatch(eventList);
                 break;
             } catch (ChannelException ce) {
-                logger.error("Error processEventBatch. Sleep and retry {} time(s) -- {}", ++retryTimes, ce);
+                logger.error("Error processEventBatch. Sleep and retry {} time(s)", ++retryTimes, ce);
 
                 try {
                     Thread.sleep(BACKOFF_TIME_IN_MILLIS);
                 } catch (InterruptedException ie) {
-                    logger.error("Interrupted sleep {}", ie);
+                    logger.error("Interrupted sleep", ie);
                 }
 
 
             } catch (Throwable t) {
-                logger.error("Error processEventBatch. Sleep and retry {} time(s) -- {}", ++retryTimes, t);
+                logger.error("Error processEventBatch. Sleep and retry {} time(s)", ++retryTimes, t);
 
                 try {
                     Thread.sleep(BACKOFF_TIME_IN_MILLIS);
                 } catch (InterruptedException ie) {
-                    logger.error("Interrupted sleep {}", ie);
+                    logger.error("Interrupted sleep", ie);
                 }
             }
         }

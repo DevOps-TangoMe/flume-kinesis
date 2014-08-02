@@ -15,17 +15,12 @@
  */
 package com.tango.flume.kinesis.sink;
 
-import com.amazonaws.AmazonClientException;
 import com.amazonaws.services.kinesis.AmazonKinesisClient;
 import com.amazonaws.services.kinesis.model.PutRecordRequest;
 import com.amazonaws.services.kinesis.model.PutRecordResult;
-import junit.framework.Assert;
 import org.apache.flume.*;
-import org.apache.flume.Sink.Status;
 import org.apache.flume.event.SimpleEvent;
 import org.junit.Test;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import static org.mockito.Matchers.any;
 import static org.mockito.Matchers.eq;
@@ -57,6 +52,9 @@ public class TestKinesisSink {
         kinesisSink.setChannel(channel);
 
         Context context = new Context();
+        context.put(KinesisSinkConfigurationConstant.ACCESS_KEY, "default");
+        context.put(KinesisSinkConfigurationConstant.ACCESS_SECRET_KEY, "default");
+        context.put(KinesisSinkConfigurationConstant.STREAM_NAME, "default");
         kinesisSink.configure(context);
 
         kinesisSink.start();
@@ -71,6 +69,5 @@ public class TestKinesisSink {
         verify(transactionMock, times(1)).commit();
         verify(transactionMock, times(0)).rollback();
     }
-
 
 }

@@ -17,11 +17,11 @@ package com.tango.flume.kinesis.sink;
 
 
 public class KinesisSinkConfigurationConstant {
-	public static final String ACCESSKEY = "accessKey";
-    public static final String ACCESSSECRETKEY ="accessSecretKey";
-    public static final String KINESISPARTITIONS = "kinesisPartitions";
-    public static final String STREAMNAME = "streamName";
-    public static final String KINESISENDPOINT = "kinesisEndpoint";
+	public static final String ACCESS_KEY = "accessKey";
+    public static final String ACCESS_SECRET_KEY ="accessSecretKey";
+    public static final String KINESIS_PARTITIONS = "kinesisPartitions";
+    public static final String STREAM_NAME = "streamName";
+    public static final String KINESIS_ENDPOINT = "kinesisEndpoint";
     public static final String BATCH_SIZE = "batchSize";
 
     public static final Integer DEFAULT_BATCH_SIZE = 1;

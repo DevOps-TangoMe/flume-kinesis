@@ -15,7 +15,11 @@
  */
 package com.tango.flume.kinesis.sink;
 
+import com.amazonaws.AmazonServiceException;
 import com.amazonaws.auth.BasicAWSCredentials;
+import com.amazonaws.services.cloudfront.model.InvalidArgumentException;
+import com.amazonaws.services.cloudsearchv2.model.ResourceNotFoundException;
+import com.amazonaws.services.dynamodbv2.model.ProvisionedThroughputExceededException;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Preconditions;
 import org.apache.commons.lang.StringUtils;
@@ -35,7 +39,7 @@ import com.amazonaws.services.kinesis.model.PutRecordResult;
 
 public class KinesisSink extends AbstractSink implements Configurable {
     private static final Logger logger = LoggerFactory.getLogger(KinesisSink.class);
-    static AmazonKinesisClient kinesisClient;
+    private AmazonKinesisClient kinesisClient;
 
     /**
      * Configuration attributes
@@ -47,6 +51,9 @@ public class KinesisSink extends AbstractSink implements Configurable {
     private String numberOfPartitions = null;
     private String kinesisEndpoint = null;
     private Integer batchSize = null;
+
+    private static final long BACKOFF_TIME_IN_MILLIS = 3000L;
+    private static final int NUM_RETRIES = 10;
 
 
     public KinesisSink() {
@@ -61,7 +68,7 @@ public class KinesisSink extends AbstractSink implements Configurable {
 
     @Override
     public synchronized void start() {
-        logger.info("Starting KinesisSink: ");
+        logger.info("Starting KinesisSink:  " + this.getName());
         if (this.kinesisClient == null) {
             this.kinesisClient = new AmazonKinesisClient(new BasicAWSCredentials(this.accessKey, this.accessSecretKey));
         }
@@ -71,7 +78,7 @@ public class KinesisSink extends AbstractSink implements Configurable {
 
     @Override
     public synchronized void stop() {
-        logger.info("Stoping KinesisSink");
+        logger.info("Stoping KinesisSink: " + this.getName());
         super.stop();
     }
 
@@ -109,23 +116,40 @@ public class KinesisSink extends AbstractSink implements Configurable {
                     putRecordRequest.setStreamName(this.streamName);
                     putRecordRequest.setData(ByteBuffer.wrap(event.getBody()));
                     putRecordRequest.setPartitionKey("partitionKey_" + partitionKey);
-                    PutRecordResult putRecordResult = kinesisClient.putRecord(putRecordRequest);
-                    if (logger.isDebugEnabled()) {
-                        logger.debug("Record put to kinesis ---{}", event.toString());
+
+                    int attempt = 0;
+                    while (true) {
+                        try {
+                            PutRecordResult putRecordResult = kinesisClient.putRecord(putRecordRequest);
+                            if (logger.isDebugEnabled()) {
+                                logger.debug("Record put to kinesis --- {}", event.toString());
+                            }
+
+                            break;
+                        } catch (ProvisionedThroughputExceededException ptee) {
+                            if (++attempt == NUM_RETRIES) {
+                                com.google.common.base.Throwables.propagate(ptee);
+                            }
+                            try {
+                                Thread.sleep(BACKOFF_TIME_IN_MILLIS);
+                            } catch (InterruptedException ie) {
+                                logger.error("Interrupted sleep", ie);
+                            }
+                        }
                     }
                 }
             }
 
             txn.commit();
         } catch (AmazonClientException e) {
-            logger.error("Can't put record to amazon kinesis -- {}", e);
+            logger.error("Can't put record to amazon kinesis", e);
             txn.rollback();
             status = Status.BACKOFF;
         } catch (Throwable t) {
+            logger.error("Transaction failed ", t);
             txn.rollback();
             // Log exception, handle individual exceptions as needed
             status = Status.BACKOFF;
-            logger.error("Transaction failed " + t);
             // re-throw all Errors
             if (t instanceof Error) {
                 throw (Error)t;
@@ -140,27 +164,27 @@ public class KinesisSink extends AbstractSink implements Configurable {
 
     @Override
     public void configure(Context context) {
-        this.accessKey = context.getString(KinesisSinkConfigurationConstant.ACCESSKEY);
+        this.accessKey = context.getString(KinesisSinkConfigurationConstant.ACCESS_KEY);
         if (StringUtils.isBlank(this.accessKey)) {
             logger.error("Access key cannot be blank");
             throw new IllegalArgumentException("Access key cannot be blank");
         }
 
-        this.accessSecretKey = context.getString(KinesisSinkConfigurationConstant.ACCESSSECRETKEY);
+        this.accessSecretKey = context.getString(KinesisSinkConfigurationConstant.ACCESS_SECRET_KEY);
         if (StringUtils.isBlank(this.accessSecretKey)) {
             logger.error("Access secret key cannot be blank");
             throw new IllegalArgumentException("Access secret key cannot be blank");
         }
 
-        this.numberOfPartitions = context.getString(KinesisSinkConfigurationConstant.KINESISPARTITIONS, "2");
+        this.numberOfPartitions = context.getString(KinesisSinkConfigurationConstant.KINESIS_PARTITIONS, "2");
 
-        this.streamName = context.getString(KinesisSinkConfigurationConstant.STREAMNAME);
+        this.streamName = context.getString(KinesisSinkConfigurationConstant.STREAM_NAME);
         if(StringUtils.isBlank(this.streamName)){
             logger.error("Stream name cannot be blank");
             throw new IllegalArgumentException("Stream name cannot be blank");
         }
 
-        this.kinesisEndpoint = context.getString(KinesisSinkConfigurationConstant.KINESISENDPOINT,"https://kinesis.us-west-2.amazonaws.com");
+        this.kinesisEndpoint = context.getString(KinesisSinkConfigurationConstant.KINESIS_ENDPOINT,"https://kinesis.us-west-2.amazonaws.com");
         batchSize = context.getInteger(KinesisSinkConfigurationConstant.BATCH_SIZE,
                 KinesisSinkConfigurationConstant.DEFAULT_BATCH_SIZE);
         Preconditions.checkState(batchSize > 0, KinesisSinkConfigurationConstant.BATCH_SIZE
