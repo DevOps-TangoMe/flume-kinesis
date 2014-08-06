@@ -17,21 +17,39 @@
 package com.tango.flume.kinesis.source;
 
 
-
 import org.apache.flume.channel.ChannelProcessor;
 
 import com.amazonaws.services.kinesis.clientlibrary.interfaces.IRecordProcessor;
 import com.amazonaws.services.kinesis.clientlibrary.interfaces.IRecordProcessorFactory;
+import com.tango.flume.kinesis.source.serializer.Serializer;
 
 public class RecordProcessorFactory implements IRecordProcessorFactory{
     ChannelProcessor chProcessor;
-    public RecordProcessorFactory(ChannelProcessor channelProcessor) {
+    Serializer serializer = null;
+    Long backOffTimeInMillis = null;
+    Integer numberRetries = null;
+    Long checkpointIntervalMillis = null;
+
+
+    public RecordProcessorFactory(ChannelProcessor channelProcessor,
+                                  Serializer serializer,
+                                  Long backOffTimeInMillis,
+                                  Integer numberRetries,
+                                  Long checkpointIntervalMillis) {
         super();
         this.chProcessor = channelProcessor;
+        this.serializer = serializer;
+        this.backOffTimeInMillis = backOffTimeInMillis;
+        this.numberRetries = numberRetries;
+        this.checkpointIntervalMillis = checkpointIntervalMillis;
     }
 
     @Override
     public IRecordProcessor createProcessor() {
-        return new FlumeSourceRecordProcessor(chProcessor);
+        return new FlumeSourceRecordProcessor(chProcessor,
+                                              serializer,
+                                              backOffTimeInMillis,
+                                              numberRetries,
+                                              checkpointIntervalMillis);
     }
 }

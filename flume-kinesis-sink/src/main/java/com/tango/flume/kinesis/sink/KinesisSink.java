@@ -15,13 +15,11 @@
  */
 package com.tango.flume.kinesis.sink;
 
-import com.amazonaws.AmazonServiceException;
 import com.amazonaws.auth.BasicAWSCredentials;
-import com.amazonaws.services.cloudfront.model.InvalidArgumentException;
-import com.amazonaws.services.cloudsearchv2.model.ResourceNotFoundException;
 import com.amazonaws.services.dynamodbv2.model.ProvisionedThroughputExceededException;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Preconditions;
+import com.google.common.base.Throwables;
 import org.apache.commons.lang.StringUtils;
 import org.apache.flume.*;
 import org.apache.flume.conf.Configurable;
@@ -36,6 +34,8 @@ import com.amazonaws.AmazonClientException;
 import com.amazonaws.services.kinesis.AmazonKinesisClient;
 import com.amazonaws.services.kinesis.model.PutRecordRequest;
 import com.amazonaws.services.kinesis.model.PutRecordResult;
+import com.tango.flume.kinesis.sink.serializer.Serializer;
+import com.tango.flume.kinesis.sink.serializer.KinesisSerializerException;
 
 public class KinesisSink extends AbstractSink implements Configurable {
     private static final Logger logger = LoggerFactory.getLogger(KinesisSink.class);
@@ -51,9 +51,10 @@ public class KinesisSink extends AbstractSink implements Configurable {
     private String numberOfPartitions = null;
     private String kinesisEndpoint = null;
     private Integer batchSize = null;
+    private Serializer serializer = null;
+    private static Long backOffTimeInMillis = null;
+    private static Integer numberRetries = null;
 
-    private static final long BACKOFF_TIME_IN_MILLIS = 3000L;
-    private static final int NUM_RETRIES = 10;
 
 
     public KinesisSink() {
@@ -87,7 +88,8 @@ public class KinesisSink extends AbstractSink implements Configurable {
         Status status = Status.READY;
 
         // Start transaction
-        List<Event> batchEvents = new ArrayList<Event>(batchSize);
+
+        List<byte[]> batchEvents = new ArrayList<byte[]>(batchSize);
         Channel ch = getChannel();
         Transaction txn = ch.getTransaction();
 
@@ -99,7 +101,12 @@ public class KinesisSink extends AbstractSink implements Configurable {
                 if (event == null) {
                     status = Status.BACKOFF;
                 } else {
-                    batchEvents.add(event);
+                    try{
+                        batchEvents.add(serializer.serialize(event));
+                    }catch (KinesisSerializerException e){
+                        logger.error("Could not serialize event: " + event, e);
+                    }
+
                 }
             }
 
@@ -110,11 +117,12 @@ public class KinesisSink extends AbstractSink implements Configurable {
                 if (logger.isDebugEnabled()) {
                     logger.debug("Sending " + batchEvents.size() + " events");
                 }
-                for (Event event : batchEvents) {
+
+                for (byte[] event: batchEvents) {
                     int partitionKey = new Random().nextInt((Integer.valueOf(numberOfPartitions) - 1) + 1) + 1;
                     PutRecordRequest putRecordRequest = new PutRecordRequest();
                     putRecordRequest.setStreamName(this.streamName);
-                    putRecordRequest.setData(ByteBuffer.wrap(event.getBody()));
+                    putRecordRequest.setData(ByteBuffer.wrap(event));
                     putRecordRequest.setPartitionKey("partitionKey_" + partitionKey);
 
                     int attempt = 0;
@@ -126,12 +134,12 @@ public class KinesisSink extends AbstractSink implements Configurable {
                             }
 
                             break;
-                        } catch (ProvisionedThroughputExceededException ptee) {
-                            if (++attempt == NUM_RETRIES) {
-                                com.google.common.base.Throwables.propagate(ptee);
+                        } catch (ProvisionedThroughputExceededException e) {
+                            if (++attempt == numberRetries) {
+                                Throwables.propagate(e);
                             }
                             try {
-                                Thread.sleep(BACKOFF_TIME_IN_MILLIS);
+                                Thread.sleep(backOffTimeInMillis);
                             } catch (InterruptedException ie) {
                                 logger.error("Interrupted sleep", ie);
                             }
@@ -142,12 +150,12 @@ public class KinesisSink extends AbstractSink implements Configurable {
 
             txn.commit();
         } catch (AmazonClientException e) {
-            logger.error("Can't put record to amazon kinesis", e);
             txn.rollback();
+            logger.error("Can't put record to amazon kinesis", e);
             status = Status.BACKOFF;
         } catch (Throwable t) {
-            logger.error("Transaction failed ", t);
             txn.rollback();
+            logger.error("Transaction failed ", t);
             // Log exception, handle individual exceptions as needed
             status = Status.BACKOFF;
             // re-throw all Errors
@@ -176,7 +184,8 @@ public class KinesisSink extends AbstractSink implements Configurable {
             throw new IllegalArgumentException("Access secret key cannot be blank");
         }
 
-        this.numberOfPartitions = context.getString(KinesisSinkConfigurationConstant.KINESIS_PARTITIONS, "2");
+        this.numberOfPartitions = context.getString(KinesisSinkConfigurationConstant.KINESIS_PARTITIONS,
+                                                    KinesisSinkConfigurationConstant.DEFAULT_KINESIS_PARTITIONS);
 
         this.streamName = context.getString(KinesisSinkConfigurationConstant.STREAM_NAME);
         if(StringUtils.isBlank(this.streamName)){
@@ -184,11 +193,49 @@ public class KinesisSink extends AbstractSink implements Configurable {
             throw new IllegalArgumentException("Stream name cannot be blank");
         }
 
-        this.kinesisEndpoint = context.getString(KinesisSinkConfigurationConstant.KINESIS_ENDPOINT,"https://kinesis.us-west-2.amazonaws.com");
-        batchSize = context.getInteger(KinesisSinkConfigurationConstant.BATCH_SIZE,
-                KinesisSinkConfigurationConstant.DEFAULT_BATCH_SIZE);
+        this.kinesisEndpoint = context.getString(KinesisSinkConfigurationConstant.KINESIS_ENDPOINT,
+                                                 KinesisSinkConfigurationConstant.DEFAULT_KINESIS_ENDPOINT);
+
+        this.batchSize = context.getInteger(KinesisSinkConfigurationConstant.BATCH_SIZE,
+                                            KinesisSinkConfigurationConstant.DEFAULT_BATCH_SIZE);
+
         Preconditions.checkState(batchSize > 0, KinesisSinkConfigurationConstant.BATCH_SIZE
                 + " parameter must be greater than 1");
+
+        this.backOffTimeInMillis = context.getLong(KinesisSinkConfigurationConstant.BACKOFF_TIME_IN_MILLIS,
+                                                   KinesisSinkConfigurationConstant.DEFAUTL_BACKOFF_TIME_IN_MILLIS);
+
+        this.numberRetries = context.getInteger(KinesisSinkConfigurationConstant.NUM_RETRIES,
+                                                KinesisSinkConfigurationConstant.DEFAULT_NUM_RETRIES);
+
+        //serializer
+        String serializerClassName = context.getString(KinesisSinkConfigurationConstant.SERIALIZER,
+                                                       KinesisSinkConfigurationConstant.DEFAULT_SERIALIZER_CLASS_NAME);
+        try {
+            /**
+             * Instantiate serializer
+             */
+            @SuppressWarnings("unchecked") Class<? extends Serializer> clazz = (Class<? extends Serializer>) Class
+                    .forName(serializerClassName);
+            serializer = clazz.newInstance();
+
+            /**
+             * Configure it
+             */
+            Context serializerContext = new Context();
+            serializerContext.putAll(context.getSubProperties(KinesisSinkConfigurationConstant.SERIALIZER_PREFIX));
+            serializer.configure(serializerContext);
+
+        } catch (ClassNotFoundException e) {
+            logger.error("Could not instantiate event serializer", e);
+            Throwables.propagate(e);
+        } catch (InstantiationException e) {
+            logger.error("Could not instantiate event serializer", e);
+            Throwables.propagate(e);
+        } catch (IllegalAccessException e) {
+            logger.error("Could not instantiate event serializer", e);
+            Throwables.propagate(e);
+        }
 
     }
 }

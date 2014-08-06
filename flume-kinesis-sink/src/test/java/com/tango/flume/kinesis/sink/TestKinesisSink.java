@@ -23,10 +23,8 @@ import org.apache.flume.event.SimpleEvent;
 import org.junit.Test;
 
 import static org.mockito.Matchers.any;
-import static org.mockito.Matchers.eq;
 import static org.mockito.Mockito.*;
 import static org.mockito.Mockito.when;
-
 
 public class TestKinesisSink {
 

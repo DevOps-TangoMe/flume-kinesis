@@ -16,17 +16,15 @@
 
 package com.tango.flume.kinesis.source;
 
-import java.nio.charset.Charset;
-import java.nio.charset.CharsetDecoder;
+import java.nio.charset.CharacterCodingException;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 
+import com.tango.flume.kinesis.source.serializer.KinesisSerializerException;
+import com.tango.flume.kinesis.source.serializer.Serializer;
 import org.apache.flume.ChannelException;
 import org.apache.flume.Event;
 import org.apache.flume.channel.ChannelProcessor;
-import org.apache.flume.event.SimpleEvent;
 
 import com.amazonaws.services.kinesis.clientlibrary.exceptions.InvalidStateException;
 import com.amazonaws.services.kinesis.clientlibrary.exceptions.ShutdownException;
@@ -40,25 +38,30 @@ import org.slf4j.LoggerFactory;
 
 public class FlumeSourceRecordProcessor implements IRecordProcessor{
     private static final Logger logger = LoggerFactory.getLogger(FlumeSourceRecordProcessor.class);
-    private String kinesisShardId;
-
-    private static final String TIMESTAMP = "timestamp";
+    private String kinesisShardId = null;
 
     // Backoff and retry settings
-    private static final long BACKOFF_TIME_IN_MILLIS = 3000L;
-    private static final int NUM_RETRIES = 10;
+    private Long backoffTimeInMillis = null;
+    private Integer numberRetries = null;
+    private Serializer serializer = null;
 
     // Checkpoint about once a minute
-    private static final long CHECKPOINT_INTERVAL_MILLIS = 60000L;
+    private static Long checkpointIntervalMillis = null;
     private long nextCheckpointTimeInMillis;
 
-    private final CharsetDecoder decoder = Charset.forName("UTF-8").newDecoder();
-
-
     ChannelProcessor chProcessor;
-    public FlumeSourceRecordProcessor(ChannelProcessor chProcessor) {
+    public FlumeSourceRecordProcessor(ChannelProcessor chProcessor,
+                                      Serializer serializer,
+                                      Long backOffTimeInMillis,
+                                      Integer numberRetries,
+                                      Long checkpointIntervalMillis) {
         super();
         this.chProcessor = chProcessor;
+        this.numberRetries = numberRetries;
+        this.backoffTimeInMillis = backOffTimeInMillis;
+        this.checkpointIntervalMillis = checkpointIntervalMillis;
+        this.serializer = serializer;
+
     }
 
     @Override
@@ -79,7 +82,7 @@ public class FlumeSourceRecordProcessor implements IRecordProcessor{
         // Checkpoint once every checkpoint interval.
         if (System.currentTimeMillis() > nextCheckpointTimeInMillis) {
             checkpoint(checkpointer);
-            nextCheckpointTimeInMillis = System.currentTimeMillis() + CHECKPOINT_INTERVAL_MILLIS;
+            nextCheckpointTimeInMillis = System.currentTimeMillis() + checkpointIntervalMillis;
         }
     }
 
@@ -88,62 +91,61 @@ public class FlumeSourceRecordProcessor implements IRecordProcessor{
      */
     private void processRecordsWithRetries(List<Record> records) {
 
-        Event event;
-        Map<String, String> headers;
 
-        ArrayList<Event> eventList=new ArrayList<Event>(records.size());
-
+        List<Event> flumeEvents = new ArrayList<Event>(records.size());
         for (Record record : records) {
             boolean processedSuccessfully = false;
 
-            for (int i = 0; i < NUM_RETRIES; i++) {
-                try {
-
-                    event = new SimpleEvent();
-                    headers = new HashMap<String, String>();
-                    headers.put(FlumeSourceRecordProcessor.TIMESTAMP, String.valueOf(System.currentTimeMillis()));
-                    String data = decoder.decode(record.getData()).toString();
-                    if (logger.isDebugEnabled()) {
-                        logger.debug(record.getSequenceNumber() + ", " + record.getPartitionKey()+":"+data);
+            for (int i = 0; i < numberRetries; i++) {
+                try{
+                    Event flumeEvent = serializer.parseEvent(record);
+                    if(flumeEvent != null && logger.isTraceEnabled()){
+                        logger.trace("Event parsed as :" + flumeEvent.toString());
                     }
-                    event.setBody(data.getBytes());
-                    event.setHeaders(headers);
-                    eventList.add(event);
-
+                    flumeEvents.add(flumeEvent);
                     processedSuccessfully = true;
                     break;
 
-                } catch (Throwable t) {
+                }catch (CharacterCodingException  e){
+                    logger.error("Error while decoding record " + record, e);
+
+                }catch (KinesisSerializerException e){
+                    logger.error("Error while serializing record " + record, e);
+
+                }catch (Throwable t) {
                     logger.error("Caught throwable while processing record " + record, t);
                 }
 
                 try {
-                    Thread.sleep(BACKOFF_TIME_IN_MILLIS);
+                    Thread.sleep(backoffTimeInMillis);
                 } catch (InterruptedException e) {
                     logger.error("Interrupted sleep", e);
                 }
             }
 
             if (!processedSuccessfully) {
-                logger.error("Couldn't process record " + record + ". Skipping the record.");
+                logger.error("Couldn't process record: " + record + ". Skipping the record.");
             }
 
         }
+
+
+
         if (logger.isDebugEnabled()) {
-            logger.debug("event size after: " + eventList.size());
+            logger.debug("event size after: " + flumeEvents.size());
         }
 
 
         int retryTimes = 0;
         while (true) {
             try {
-                chProcessor.processEventBatch(eventList);
+                chProcessor.processEventBatch(flumeEvents);
                 break;
             } catch (ChannelException ce) {
                 logger.error("Error processEventBatch. Sleep and retry {} time(s)", ++retryTimes, ce);
 
                 try {
-                    Thread.sleep(BACKOFF_TIME_IN_MILLIS);
+                    Thread.sleep(backoffTimeInMillis);
                 } catch (InterruptedException ie) {
                     logger.error("Interrupted sleep", ie);
                 }
@@ -153,7 +155,7 @@ public class FlumeSourceRecordProcessor implements IRecordProcessor{
                 logger.error("Error processEventBatch. Sleep and retry {} time(s)", ++retryTimes, t);
 
                 try {
-                    Thread.sleep(BACKOFF_TIME_IN_MILLIS);
+                    Thread.sleep(backoffTimeInMillis);
                 } catch (InterruptedException ie) {
                     logger.error("Interrupted sleep", ie);
                 }
@@ -183,7 +185,7 @@ public class FlumeSourceRecordProcessor implements IRecordProcessor{
             logger.debug("Checkpointing shard " + kinesisShardId);
         }
         boolean done = false;
-        for (int i = 0; i < NUM_RETRIES && !done; i++) {
+        for (int i = 0; i < numberRetries && !done; i++) {
             try {
                 checkpointer.checkpoint();
                 done = true;
@@ -194,14 +196,14 @@ public class FlumeSourceRecordProcessor implements IRecordProcessor{
             } catch (ThrottlingException e) {
                 // Backoff and re-attempt checkpoint upon transient failures
                 logger.error("Transient issue when checkpointing - attempt " + (i + 1) + " of "
-                        + NUM_RETRIES, e);
+                        + numberRetries, e);
             } catch (InvalidStateException e) {
                 // This indicates an issue with the DynamoDB table (check for table, provisioned IOPS).
                 logger.error("Cannot save checkpoint to the DynamoDB table used by the Amazon Kinesis Client Library.", e);
                 done = true;
             }
             try {
-                Thread.sleep(BACKOFF_TIME_IN_MILLIS);
+                Thread.sleep(backoffTimeInMillis);
             } catch (InterruptedException e) {
                 logger.error("Interrupted sleep", e);
             }

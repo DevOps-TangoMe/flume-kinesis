@@ -28,6 +28,11 @@ agent.sinks.KinesisSink.kinesisPartitions =
 agent.sinks.KinesisSink.streamName =
 agent.sinks.KinesisSink.batchSize =
 agent.sinks.KinesisSink.kinesisEndpoint=https://kinesis.us-west-2.amazonaws.com
+agent.sinks.KinesisSink.backOffTimeInMillis =
+agent.sinks.KinesisSink.numberRetries =
+agent.sinks.KinesisSInk.serializer =
+agent.sinks.KinesisSInk.serializer. =
+
 
 ## source configurationS
 ################################################
@@ -36,6 +41,11 @@ agent.sources.KinesisSource.accessKey =
 agent.sources.KinesisSource.accessSecretKey=
 agent.sources.KinesisSource.kinesisApplicationName=
 agent.sources.KinesisSource.kinesisStreamName=
+agent.sources.KinesisSource.serializer =
+agent.sources.KinesisSource.backOffTimeInMillis =
+agent.sources.KinesisSource.numberRetries =
+agent.sources.KinesisSource.checkpointIntervalMillis =
+agent.sources.KinesisSource.failoverTimeMillis =
 agent.sources.KinesisSource.initialPosition=TRIM_HORIZON
 agent.sources.KinesisSource.kinesisEndpoint=https://kinesis.us-west-2.amazonaws.com
 

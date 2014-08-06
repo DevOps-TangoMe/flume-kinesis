@@ -20,6 +20,7 @@ import java.net.InetAddress;
 import java.net.UnknownHostException;
 import java.util.UUID;
 
+import com.google.common.base.Throwables;
 import org.apache.commons.lang.StringUtils;
 import org.apache.flume.Context;
 import org.apache.flume.EventDrivenSource;
@@ -35,6 +36,7 @@ import com.amazonaws.services.kinesis.clientlibrary.lib.worker.KinesisClientLibC
 import com.amazonaws.services.kinesis.clientlibrary.lib.worker.Worker;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import com.tango.flume.kinesis.source.serializer.Serializer;
 
 public class KinesisSource extends AbstractSource implements Configurable, EventDrivenSource {
     private static final Logger logger = LoggerFactory.getLogger(KinesisSource.class);
@@ -43,16 +45,21 @@ public class KinesisSource extends AbstractSource implements Configurable, Event
     // Initial position in the stream when the application starts up for the first time.
     // Position can be one of LATEST (most recent data) or TRIM_HORIZON (oldest available data)
     private InitialPositionInStream DEFAULT_INITIAL_POSITION = InitialPositionInStream.TRIM_HORIZON;
-    private static final String DEFAULT_KINESIS_ENDPOINT = "https://kinesis.us-west-2.amazonaws.com";
-    private String applicationName;
-    private String streamName;
-    private String kinesisEndpoint = DEFAULT_KINESIS_ENDPOINT;
-    private String initialPosition;
 
-    private KinesisClientLibConfiguration kinesisClientLibConfiguration;
-    private String accessKey;
-    private String accessSecretKey;
+    private String applicationName = null;
+    private String streamName = null;
+    private String kinesisEndpoint = null;
+    private String initialPosition = null;
 
+    private KinesisClientLibConfiguration kinesisClientLibConfiguration = null;
+    private String accessKey = null;
+    private String accessSecretKey = null;
+
+    private Serializer serializer = null;
+    private Long backOffTimeInMillis = null;
+    private Integer numberRetries = null;
+    private Long checkpointIntervalMillis = null;
+    private Long failoverTimeMillis = null;
 
 
     public KinesisSource(){
@@ -88,12 +95,51 @@ public class KinesisSource extends AbstractSource implements Configurable, Event
             throw new IllegalArgumentException("Stream name cannot be blank");
         }
 
-        this.kinesisEndpoint = context.getString(KinesisSourceConfigurationConstant.KINESIS_ENDPOINT, DEFAULT_KINESIS_ENDPOINT);
+        this.kinesisEndpoint = context.getString(KinesisSourceConfigurationConstant.KINESIS_ENDPOINT,
+                                                 KinesisSourceConfigurationConstant.DEFAULT_KINESIS_ENDPOINT);
         this.initialPosition = context.getString(KinesisSourceConfigurationConstant.INITIAL_POSITION, "TRIM_HORIZON");
 
 
         if (initialPosition.equals("LATEST")){
             DEFAULT_INITIAL_POSITION=InitialPositionInStream.LATEST;
+        }
+
+
+        this.backOffTimeInMillis = context.getLong(KinesisSourceConfigurationConstant.BACKOFF_TIME_IN_MILLIS,
+                                                   KinesisSourceConfigurationConstant.DEFAUTL_BACKOFF_TIME_IN_MILLIS);
+        this.numberRetries = context.getInteger(KinesisSourceConfigurationConstant.NUM_RETRIES,
+                                                KinesisSourceConfigurationConstant.DEFAULT_NUM_RETRIES);
+        this.checkpointIntervalMillis = context.getLong(KinesisSourceConfigurationConstant.CHECKPOINT_INTERVAL_MILLIS,
+                                                        KinesisSourceConfigurationConstant.DEFAULT_CHECKPOINT_INTERVAL_MILLIS);
+        this.failoverTimeMillis = context.getLong(KinesisSourceConfigurationConstant.FAILOVER_TIME_MILLIS,
+                                                  KinesisSourceConfigurationConstant.DEFAULT_FAILOVER_TIME_MILLIS);
+        //serializer
+        String serializerClassName = context.getString(KinesisSourceConfigurationConstant.SERIALIZER,
+                                                       KinesisSourceConfigurationConstant.DEFAULT_SERIALIZER_CLASS_NAME);
+        try {
+            /**
+             * Instantiate serializer
+             */
+            @SuppressWarnings("unchecked") Class<? extends Serializer> clazz = (Class<? extends Serializer>) Class
+                    .forName(serializerClassName);
+            serializer = clazz.newInstance();
+
+            /**
+             * Configure it
+             */
+            Context serializerContext = new Context();
+            serializerContext.putAll(context.getSubProperties(KinesisSourceConfigurationConstant.SERIALIZER_PREFIX));
+            serializer.configure(serializerContext);
+
+        } catch (ClassNotFoundException e) {
+            logger.error("Could not instantiate event serializer", e);
+            Throwables.propagate(e);
+        } catch (InstantiationException e) {
+            logger.error("Could not instantiate event serializer", e);
+            Throwables.propagate(e);
+        } catch (IllegalAccessException e) {
+            logger.error("Could not instantiate event serializer", e);
+            Throwables.propagate(e);
         }
 
 
@@ -103,15 +149,14 @@ public class KinesisSource extends AbstractSource implements Configurable, Event
 
         } catch(AmazonClientException e){
             logger.error("Credentials are not matched", e);
-            com.google.common.base.Throwables.propagate(e);
+            Throwables.propagate(e);
         }
 
         try {
             workerId = InetAddress.getLocalHost().getCanonicalHostName() + ":" + UUID.randomUUID();
         } catch (UnknownHostException e) {
             logger.error("Fail to generate workerID", e);
-            com.google.common.base.Throwables.propagate(e);
-
+            Throwables.propagate(e);
         }
 
 
@@ -120,14 +165,20 @@ public class KinesisSource extends AbstractSource implements Configurable, Event
         kinesisClientLibConfiguration = new KinesisClientLibConfiguration(applicationName, streamName,
                 credentialsProvider, workerId).
                 withKinesisEndpoint(kinesisEndpoint).
-                withInitialPositionInStream(DEFAULT_INITIAL_POSITION);
+                withInitialPositionInStream(DEFAULT_INITIAL_POSITION).
+                withFailoverTimeMillis(failoverTimeMillis);
 
     }
 
     @Override
     public void start() {
 
-        IRecordProcessorFactory recordProcessorFactory = new RecordProcessorFactory(getChannelProcessor());
+        IRecordProcessorFactory recordProcessorFactory = new RecordProcessorFactory(getChannelProcessor(),
+                                                                                    serializer,
+                                                                                    backOffTimeInMillis,
+                                                                                    numberRetries,
+                                                                                    checkpointIntervalMillis);
+
         worker = new Worker(recordProcessorFactory, kinesisClientLibConfiguration);
 
         Runtime.getRuntime().addShutdownHook(new Thread() {
@@ -141,7 +192,7 @@ public class KinesisSource extends AbstractSource implements Configurable, Event
             worker.run();
         }catch (AmazonClientException e) {
             logger.error("Can't connect to amazon kinesis", e);
-            com.google.common.base.Throwables.propagate(e);
+            Throwables.propagate(e);
         }
 
     }
@@ -150,7 +201,5 @@ public class KinesisSource extends AbstractSource implements Configurable, Event
     public void stop() {
 
     }
-
-
 
 }

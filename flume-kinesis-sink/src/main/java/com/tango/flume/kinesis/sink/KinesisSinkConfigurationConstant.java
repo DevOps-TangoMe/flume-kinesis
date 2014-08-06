@@ -14,7 +14,7 @@
  *  limitations under the License.
  */
 package com.tango.flume.kinesis.sink;
-
+import com.tango.flume.kinesis.sink.serializer.PlainSerializer;
 
 public class KinesisSinkConfigurationConstant {
 	public static final String ACCESS_KEY = "accessKey";
@@ -23,6 +23,16 @@ public class KinesisSinkConfigurationConstant {
     public static final String STREAM_NAME = "streamName";
     public static final String KINESIS_ENDPOINT = "kinesisEndpoint";
     public static final String BATCH_SIZE = "batchSize";
+    public static final String BACKOFF_TIME_IN_MILLIS = "backOffTimeInMillis";
+    public static final String NUM_RETRIES = "numberRetries";
+    public static final String SERIALIZER = "serializer";
+    public static final String SERIALIZER_PREFIX = "serializer.";
 
     public static final Integer DEFAULT_BATCH_SIZE = 1;
+    public static final String DEFAULT_KINESIS_PARTITIONS = "2";
+    public static final Long DEFAUTL_BACKOFF_TIME_IN_MILLIS = 3000L;
+    public static final Integer DEFAULT_NUM_RETRIES = 10;
+    public static final String DEFAULT_SERIALIZER_CLASS_NAME = PlainSerializer.class.getName();
+    public static final String DEFAULT_KINESIS_ENDPOINT = "https://kinesis.us-west-2.amazonaws.com";
+
 }
